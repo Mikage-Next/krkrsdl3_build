@@ -2,7 +2,7 @@
 
 [简体中文](README.md) · English
 
-This is a fork of [krkrsdl3_build](https://github.com/krkrsdl3/krkrsdl3_build) that builds the KiriKiri runtime used by [Mikage Next](https://github.com/itsCheney/Mikage-Next). The engine source lives in the `cpp/` submodule, which points at the branch of the same name in [itsCheney/krkrsdl3](https://github.com/itsCheney/krkrsdl3).
+This is a fork of [krkrsdl3_build](https://github.com/krkrsdl3/krkrsdl3_build) that builds the KiriKiri runtime used by [Mikage Next](https://github.com/Mikage-Next/Mikage-Next). The engine source lives in the `cpp/` submodule, which points at the branch of the same name in [Mikage-Next/krkrsdl3](https://github.com/Mikage-Next/krkrsdl3).
 
 On top of upstream’s Windows, Linux, Android, WebAssembly, HarmonyOS and macOS builds, this fork adds a build that packages the engine as an embeddable iOS framework (`KRKRRuntime.framework`), and the C interface a host app calls.
 
@@ -35,7 +35,7 @@ The framework build also needs `MIKAGE_SDL_HOST_DIR` pointing at Mikage Next’s
 You need CMake, vcpkg and a full Xcode with the iOS SDK. The iOS presets use the Xcode generator. Dependencies such as SDL3 and FFmpeg are installed through vcpkg, so the first build takes a while.
 
 ```sh
-git clone --recursive -b mikage https://github.com/itsCheney/krkrsdl3_build.git
+git clone --recursive -b mikage https://github.com/Mikage-Next/krkrsdl3_build.git
 cd krkrsdl3_build
 export VCPKG_ROOT=/path/to/vcpkg
 
@@ -48,7 +48,7 @@ cmake --build out/ios-device --config Release --parallel
 bash script/build-ios.sh device Release
 ```
 
-Mikage Next’s [`scripts/build-krkr-ios.sh`](https://github.com/itsCheney/Mikage-Next/blob/main/scripts/build-krkr-ios.sh) builds the device and Apple Silicon simulator frameworks and combines them into `KRKRRuntime.xcframework`. Build scripts for the other platforms are in `script/`, and the presets are in `CMakePresets.json`.
+Mikage Next’s [`scripts/build-krkr-ios.sh`](https://github.com/Mikage-Next/Mikage-Next/blob/main/scripts/build-krkr-ios.sh) builds the device and Apple Silicon simulator frameworks and combines them into `KRKRRuntime.xcframework`. Build scripts for the other platforms are in `script/`, and the presets are in `CMakePresets.json`.
 
 ## Layout
 

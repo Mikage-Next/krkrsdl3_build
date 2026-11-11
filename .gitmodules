@@ -1,4 +1,4 @@
 [submodule "cpp"]
 	path = cpp
-	url = https://github.com/itsCheney/krkrsdl3.git
+	url = https://github.com/Mikage-Next/krkrsdl3.git
 	branch = runtime-dev

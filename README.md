@@ -2,7 +2,7 @@
 
 简体中文 · [English](README.en.md)
 
-这是 [krkrsdl3_build](https://github.com/krkrsdl3/krkrsdl3_build) 的分支，负责构建 [Mikage Next](https://github.com/itsCheney/Mikage-Next) 使用的 KiriKiri 运行时。引擎源码位于 `cpp/` 子模块，指向 [itsCheney/krkrsdl3](https://github.com/itsCheney/krkrsdl3) 的同名分支。
+这是 [krkrsdl3_build](https://github.com/krkrsdl3/krkrsdl3_build) 的分支，负责构建 [Mikage Next](https://github.com/Mikage-Next/Mikage-Next) 使用的 KiriKiri 运行时。引擎源码位于 `cpp/` 子模块，指向 [Mikage-Next/krkrsdl3](https://github.com/Mikage-Next/krkrsdl3) 的同名分支。
 
 在上游原有的 Windows、Linux、Android、WebAssembly、HarmonyOS、macOS 构建之外，这个分支增加了把引擎打包为可嵌入 iOS framework（`KRKRRuntime.framework`）的构建方式，以及宿主 App 调用的 C 接口。
 
@@ -35,7 +35,7 @@ framework 构建还需要 `MIKAGE_SDL_HOST_DIR` 指向 Mikage Next 的 `Engine/M
 需要 CMake、vcpkg 和完整的 Xcode（iOS SDK）。iOS 预设使用 Xcode 生成器。依赖（SDL3、FFmpeg 等）通过 vcpkg 安装，首次构建较慢。
 
 ```sh
-git clone --recursive -b mikage https://github.com/itsCheney/krkrsdl3_build.git
+git clone --recursive -b mikage https://github.com/Mikage-Next/krkrsdl3_build.git
 cd krkrsdl3_build
 export VCPKG_ROOT=/path/to/vcpkg
 
@@ -48,7 +48,7 @@ cmake --build out/ios-device --config Release --parallel
 bash script/build-ios.sh device Release
 ```
 
-Mikage Next 用 [`scripts/build-krkr-ios.sh`](https://github.com/itsCheney/Mikage-Next/blob/main/scripts/build-krkr-ios.sh) 分别构建真机和 Apple Silicon 模拟器版本，再合成 `KRKRRuntime.xcframework`。其他平台的构建脚本在 `script/` 下，预设见 `CMakePresets.json`。
+Mikage Next 用 [`scripts/build-krkr-ios.sh`](https://github.com/Mikage-Next/Mikage-Next/blob/main/scripts/build-krkr-ios.sh) 分别构建真机和 Apple Silicon 模拟器版本，再合成 `KRKRRuntime.xcframework`。其他平台的构建脚本在 `script/` 下，预设见 `CMakePresets.json`。
 
 ## 目录结构
 
