@@ -79,8 +79,6 @@ else()
     set(CMAKE_TOOLCHAIN_FILE $ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake)
 endif()
 
-# SDL版本选择: ON=SDL3, OFF=SDL2
-option(USE_SDL3 "Use SDL3 (OFF for SDL2)" ON)
 # 离屏自动化测试宿主（AutoTest / -offscreen / -silent / -frames / -dump / -at_harness）
 # 关掉后所有入口在头文件里内联成空实现，主循环与送显路径不留任何调用开销
 # Mikage: the iOS app never runs the test host, so leave it out there.
@@ -96,18 +94,18 @@ option(USE_FFMPEG "Use FFmpeg for video/audio decoding" ON)
 option(USE_RENDER_GL "OpenGL 3.3+/OpenGLES 3.0+ backend" ON)
 option(USE_RENDER_VK "Vulkan backend" ON)
 set(KRKR_METAL_DEFAULT OFF)
-if((IOS OR MACOS) AND USE_SDL3 AND NOT ONLYCONSOLE)
+if((IOS OR MACOS) AND NOT ONLYCONSOLE)
     set(KRKR_METAL_DEFAULT ON)
 endif()
 option(USE_RENDER_METAL "Native Metal backend (Apple SDL3 only)" ${KRKR_METAL_DEFAULT})
-if(USE_RENDER_METAL AND (NOT (IOS OR MACOS) OR NOT USE_SDL3 OR ONLYCONSOLE))
+if(USE_RENDER_METAL AND (NOT (IOS OR MACOS) OR ONLYCONSOLE))
     message(FATAL_ERROR "USE_RENDER_METAL requires an Apple SDL3 full runtime")
 endif()
 option(KRKR_HOST_LIBRARY "Build KRKR as an embeddable iOS framework" OFF)
 # 宿主共享 SDL3：指向某个 SDL3.framework（单一架构切片）时，KRKRRuntime 动态链接它，
 # 不再静态并入 vcpkg 的 SDL3。宿主 App 负责嵌入同一个 SDL3.framework，供其它引擎复用。
 set(KRKR_SDL3_FRAMEWORK "" CACHE PATH "iOS host: link this shared SDL3.framework instead of vcpkg's static SDL3")
-if(KRKR_SDL3_FRAMEWORK AND NOT (IOS AND KRKR_HOST_LIBRARY AND USE_SDL3))
+if(KRKR_SDL3_FRAMEWORK AND NOT (IOS AND KRKR_HOST_LIBRARY))
     message(FATAL_ERROR "KRKR_SDL3_FRAMEWORK requires an iOS SDL3 build with KRKR_HOST_LIBRARY=ON")
 endif()
 # 宿主共享的 SDL 生命周期层（Mikage-Next 的 Engine/MikageSDLHost）。iOS 宿主框架
@@ -120,23 +118,29 @@ endif()
 option(TJS2_ASAN "Build with AddressSanitizer" OFF)
 # libFuzzer 目标（源解析与字节码加载）
 option(TJS2_FUZZERS "Build libFuzzer targets for tjs2" OFF)
-
-if((ANDROID OR IOS) AND NOT USE_SDL3)
-    # android/iOS由于存在平台入口与触屏层，所以不支持SDL2
-    message(FATAL_ERROR "安卓/iOS 不支持 SDL2 作为硬件后端")
-endif()
 if(ENABLE_AUTOTEST)
     add_definitions(-D_KRKRSDL3_AUTOTEST=1)
 endif()
 
+# ================================================================
+#  版本号唯一定义处（Gradle / OHOS 脚本会解析这一行）
+#  正式版: "1.2.3"    预发布: "1.2.3-beta.1" / "-rc.2" / "-alpha.3"
+# ================================================================
+set(KRKRSDL3_VERSION "0.0.7")
+
+if(NOT KRKRSDL3_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+(-(alpha|beta|rc)(\\.[0-9]+)?)?$")
+    message(FATAL_ERROR "KRKRSDL3_VERSION 格式必须为 MAJOR.MINOR.PATCH[-alpha|beta|rc[.N]]，当前值: '${KRKRSDL3_VERSION}'")
+endif()
+string(REGEX MATCH "^[0-9]+\\.[0-9]+\\.[0-9]+" KRKRSDL3_VERSION_CORE "${KRKRSDL3_VERSION}")
+
 # 建立项目
 if(ONLYCONSOLE)
-    project(tjs2 VERSION "0.0.6" LANGUAGES C CXX)
+    project(tjs2 VERSION "${KRKRSDL3_VERSION_CORE}" LANGUAGES C CXX)
 else()
     if(IOS OR MACOS)
-        project(krkrsdl3 VERSION "0.0.6" LANGUAGES C CXX OBJC OBJCXX)
+        project(krkrsdl3 VERSION "${KRKRSDL3_VERSION_CORE}" LANGUAGES C CXX OBJC OBJCXX)
     else()
-        project(krkrsdl3 VERSION "0.0.6" LANGUAGES C CXX)
+        project(krkrsdl3 VERSION "${KRKRSDL3_VERSION_CORE}" LANGUAGES C CXX)
     endif()
 endif()
 
