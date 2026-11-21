@@ -108,6 +108,13 @@ set(KRKR_SDL3_FRAMEWORK "" CACHE PATH "iOS host: link this shared SDL3.framework
 if(KRKR_SDL3_FRAMEWORK AND NOT (IOS AND KRKR_HOST_LIBRARY))
     message(FATAL_ERROR "KRKR_SDL3_FRAMEWORK requires an iOS SDL3 build with KRKR_HOST_LIBRARY=ON")
 endif()
+# 宿主共享 FFmpeg：指向某个 FFmpeg.framework（单一架构切片，头文件在其 Headers/ 下）时，
+# KRKRRuntime 动态链接它，不再静态并入 vcpkg 的 FFmpeg；此时应以
+# -DVCPKG_MANIFEST_NO_DEFAULT_FEATURES=ON 关掉 vcpkg.json 的 ffmpeg 特性。
+set(KRKR_FFMPEG_FRAMEWORK "" CACHE PATH "iOS host: link this shared FFmpeg.framework instead of vcpkg's static FFmpeg")
+if(KRKR_FFMPEG_FRAMEWORK AND NOT (IOS AND KRKR_HOST_LIBRARY AND USE_FFMPEG))
+    message(FATAL_ERROR "KRKR_FFMPEG_FRAMEWORK requires an iOS build with KRKR_HOST_LIBRARY=ON and USE_FFMPEG=ON")
+endif()
 # 宿主共享的 SDL 生命周期层（Mikage-Next 的 Engine/MikageSDLHost）。iOS 宿主框架
 # 把它编译进来，由它驱动 SDL 主回调、音频会话和每局之间的复位。
 set(MIKAGE_SDL_HOST_DIR "" CACHE PATH "iOS host: Mikage's shared SDL host sources (Engine/MikageSDLHost)")

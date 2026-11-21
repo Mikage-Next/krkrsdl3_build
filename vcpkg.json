@@ -2,10 +2,6 @@
     "dependencies": [
         "oniguruma",
         "zlib",
-        {
-            "name" : "ffmpeg",
-            "platform": "!emscripten"
-        },
         "libpng",
         "libwebp",
         "libjpeg-turbo",
@@ -44,6 +40,18 @@
             "platform": "linux"
         }
     ],
+    "default-features": ["ffmpeg"],
+    "features": {
+        "ffmpeg": {
+            "description": "FFmpeg for movies and the wuffmpeg sound decoder. A host that brings its own FFmpeg (KRKR_FFMPEG_FRAMEWORK) turns default features off.",
+            "dependencies": [
+                {
+                    "name": "ffmpeg",
+                    "platform": "!emscripten"
+                }
+            ]
+        }
+    },
     "builtin-baseline": "8e8dfb4ba483886936ded5ca201b500b8d8b0096",
     "overrides": []
 }
