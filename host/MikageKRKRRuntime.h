@@ -266,6 +266,9 @@ typedef enum MikageKRKRControl {
 // Main thread, between steps.
 bool MikageKRKRRunCommand(int32_t command);
 uint32_t MikageKRKRGameControls(void);
+// Only MikageKRKRControlAuto and MikageKRKRControlSkip of MikageKRKRGameControls,
+// read without scanning the game's links and buttons; cheap enough to poll.
+uint32_t MikageKRKRGameModes(void);
 // Holds or releases Ctrl, which skips every line (read or not) while held.
 bool MikageKRKRSetControlSkip(bool held);
 // The host's trackpad cursor, as a mouse at x, y in window points.

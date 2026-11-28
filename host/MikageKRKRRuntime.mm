@@ -1452,6 +1452,18 @@ void addKAGButtons(std::vector<KAGLink> &links)
 
 } // namespace
 
+// Just the auto and skip bits, for the overlay's once-a-second refresh of
+// its Auto and Skip buttons: one cached expression, no link or button scan.
+extern "C" uint32_t MikageKRKRGameModes(void)
+{
+    if (modalSuspended)
+        return 0;
+    const tjs_int controls = runKAGScript(kKAGControls);
+    if (controls < 0)
+        return 0;
+    return (uint32_t)controls & (MikageKRKRControlAuto | MikageKRKRControlSkip);
+}
+
 extern "C" uint32_t MikageKRKRGameControls(void)
 {
     // The game's own dialog is up; its script is mid-call.
