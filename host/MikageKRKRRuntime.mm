@@ -32,6 +32,8 @@
 #include "TVPScript.h"
 #include "tvpinputdefs.h"
 #include "../cpp/plugins/emoteplayer/emoteperformance.h"
+#include "../cpp/plugins/emoteplayer/emoteresourcecache.h"
+#import <UIKit/UIKit.h>
 
 namespace {
 std::atomic<MikageKRKRLogCallback> diagnosticCallback{nullptr};
@@ -129,6 +131,7 @@ extern "C" void MikageKRKRSetStretchToScreen(bool enabled)
 #include "TVPApplication.h"
 #include "TVPWindow.h"
 #include "TVPEvent.h"
+#include "TVPDebug.h"
 #include "tjsNativeLayer.h"
 #include "tjsArray.h"
 #include "PlatformThread.h"
@@ -272,6 +275,31 @@ bool kagProbesReady = false;
 bool kagProbesFailed = false;
 // logSystemActions ran for the running game.
 bool systemActionsLogged = false;
+
+// A memory warning arrived while game script was mid-call (a dialog is
+// up, or a nested run loop inside a step); the next top-level step
+// compacts.
+std::atomic<bool> lowMemoryPending{false};
+
+// The engine's compact event: its image, glyph, archive and scene caches
+// shrink, the TJS heap is collected, and (for these levels) the game's
+// system variables are saved. That runs game script: callers make sure
+// none is mid-call.
+void compactEngine(tjs_int level, const char *what)
+{
+    if (!MikageSDLHostIsRunning() || !TVPGetScriptEngine())
+        return;
+    try {
+        if (level >= TVP_COMPACT_LEVEL_MINIMIZE)
+            emoteplayer::ClearSharedEmoteResourceCache(what);
+        TVPDeliverCompactEvent(level);
+        MikageKRKRLogMessage("bridge", 3, what);
+    } catch (...) {
+        MikageKRKRLogMessage("bridge", 4, (std::string(what) + ".failed").c_str());
+    }
+}
+
+void observeAppLifecycle();
 std::string activeRenderer;
 Uint64 statsWindowStarted = 0;
 Uint64 previousFrameAt = 0;
@@ -405,6 +433,9 @@ SDL_AppResult hostEvent(void *appstate, SDL_Event *event)
 
 SDL_AppResult hostIterate(void *appstate)
 {
+    // Only reached from a top-level step, never from inside a dialog's loop.
+    if (lowMemoryPending.exchange(false))
+        compactEngine(TVP_COMPACT_LEVEL_MINIMIZE, "lowMemory.deferred");
     krkrsdl3::TVPBeginRuntimeStep();
     SDL_AppResult result = SDL_AppIterate(appstate);
     krkrsdl3::TVPEndRuntimeStep();
@@ -526,6 +557,8 @@ extern "C" bool MikageKRKRStart(const char *gamePath,
             krkrsdl3::TVPResetRuntimeProfileStats();
 
             traceScope.BeginSession();
+            observeAppLifecycle();
+            lowMemoryPending.store(false);
             tapWatchInstalled = false;
             tapWatchAttempts = 0;
             tapWatchNextTick = 0;
@@ -607,6 +640,46 @@ MikageKRKRStepResult runStep()
 // True while a modal window's loop has handed the frame back to the host:
 // the script that opened it is still mid-call on the step stack.
 bool modalSuspended = false;
+
+// SDL never queues its LOW_MEMORY and background events: only event
+// watches see them, and this host uses no SDL main callbacks, so the
+// engine's SDL_AppEvent never gets them. UIKit's notifications arrive on
+// the main thread between steps (or in a nested run loop inside one,
+// which stepDepth shows).
+void observeAppLifecycle()
+{
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        NSNotificationCenter *center = NSNotificationCenter.defaultCenter;
+        [center addObserverForName:UIApplicationDidReceiveMemoryWarningNotification
+                            object:nil
+                             queue:nil
+                        usingBlock:^(NSNotification *__unused note) {
+                            if (!MikageSDLHostIsRunning())
+                                return;
+                            if (stepDepth || modalSuspended) {
+                                lowMemoryPending.store(true);
+                                MikageKRKRLogMessage("bridge", 3, "lowMemory.pending");
+                                return;
+                            }
+                            DiagnosticScriptTraceScope traceScope;
+                            compactEngine(TVP_COMPACT_LEVEL_MINIMIZE, "lowMemory");
+                        }];
+        // Not on resign-active (Control Center, the app switcher): the
+        // deactivate level drops the archive and scene caches, and every
+        // pull-down would cost a reload afterwards.
+        [center addObserverForName:UIApplicationDidEnterBackgroundNotification
+                            object:nil
+                             queue:nil
+                        usingBlock:^(NSNotification *__unused note) {
+                            if (!MikageSDLHostIsRunning() || stepDepth || modalSuspended)
+                                return;
+                            DiagnosticScriptTraceScope traceScope;
+                            compactEngine(TVP_COMPACT_LEVEL_DEACTIVATE, "background.compact");
+                            TVPFlushLogFile();
+                        }];
+    });
+}
 
 // Host calls that run game script (a menu command, the quit request) run
 // on the step stack as well: that script may open a modal window, and a
@@ -1666,6 +1739,8 @@ extern "C" bool MikageKRKRSetForeground(bool value)
         // persist them here unless script is mid-execution.
         if (!value && MikageSDLHostIsRunning() && !stepDepth)
             TVPDoSaveSystemVariables();
+        if (!value)
+            TVPFlushLogFile();
         // The host deactivates the game (onDeactive) and its audio, or
         // reactivates them, through krkrEngine.
         return MikageSDLHostSetForeground(value);
