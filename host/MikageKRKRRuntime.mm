@@ -262,9 +262,16 @@ namespace {
 // Nonzero while MikageKRKRStep is on the stack. A modal SDL dialog pumps the
 // run loop mid-script, so host callbacks can arrive inside a step.
 int stepDepth = 0;
-// The KAG tap watch (kKAGTapWatch) of the running game.
+// The KAG tap watch (kKAGTapWatch) of the running game, and when to try
+// installing it next (SDL ticks; 0 = not scheduled yet this session).
 bool tapWatchInstalled = false;
-int tapWatchWait = 0;
+int tapWatchAttempts = 0;
+Uint64 tapWatchNextTick = 0;
+// kKAGProbeLibrary is defined in the running game's VM (or failed to be).
+bool kagProbesReady = false;
+bool kagProbesFailed = false;
+// logSystemActions ran for the running game.
+bool systemActionsLogged = false;
 std::string activeRenderer;
 Uint64 statsWindowStarted = 0;
 Uint64 previousFrameAt = 0;
@@ -520,7 +527,11 @@ extern "C" bool MikageKRKRStart(const char *gamePath,
 
             traceScope.BeginSession();
             tapWatchInstalled = false;
-            tapWatchWait = 0;
+            tapWatchAttempts = 0;
+            tapWatchNextTick = 0;
+            kagProbesReady = false;
+            kagProbesFailed = false;
+            systemActionsLogged = false;
             TVPHostOwnsProcess = true;
             const MikageSDLHostConfiguration configuration = {
                 static_cast<int>(argv.size()),
@@ -914,9 +925,9 @@ const SystemActionCommand *systemActionCommand(int32_t command)
 // offers when one of its screens doesn't open.
 void logSystemActions()
 {
-    static std::atomic<bool> logged{false};
-    if (logged.exchange(true) || !MikageSDLHostIsRunning())
+    if (systemActionsLogged || !MikageSDLHostIsRunning())
         return;
+    systemActionsLogged = true;
     try {
         tTJSVariant result;
         TVPExecuteExpression(ttstr(
@@ -989,7 +1000,7 @@ const char *const kKAGButtons =
     "  if (/skip|スキップ|快进|快速翻页|跳过/i.test(t)) return 'skip';"
     "  return '';"
     " };"
-    " var text = function (o, p) { try { var v = o[p]; return v === void ? '' : (string)v; } catch (e) { return ''; } };"
+    " var text = function (o, p) { if (typeof o[p] == 'undefined') return ''; try { var v = o[p]; return v === void ? '' : (string)v; } catch (e) { return ''; } };"
     " global.mikageButtons = [];"
     " if (typeof global.mikageLayers == 'undefined') return '';"
     " var learned = typeof kag.scflags != 'undefined' && kag.scflags !== void ? kag.scflags.mikageButtonKinds : void;"
@@ -1091,7 +1102,7 @@ const char *const kKAGTapWatch =
 const char *const kKAGLayerTree =
     "(function {"
     " if (typeof global.kag == 'undefined' || kag === void || typeof kag.fore == 'undefined') return '';"
-    " var text = function (o, p) { try { var v = o[p]; return v === void ? '' : (string)v; } catch (e) { return ''; } };"
+    " var text = function (o, p) { if (typeof o[p] == 'undefined') return ''; try { var v = o[p]; return v === void ? '' : (string)v; } catch (e) { return ''; } };"
     " if (typeof global.mikageLayers == 'undefined') return '';"
     " var out = [], layers = global.mikageLayers, depths = global.mikageLayerDepths;"
     " for (var i = 0; i < layers.count && out.count < 80; i++) {"
@@ -1102,6 +1113,145 @@ const char *const kKAGLayerTree =
     " }"
     " return out.join(' ');"
     "} incontextof global)()";
+
+// The probes above, defined once per game as global functions. An
+// expression holding a function literal compiles to several contexts, and
+// the expression cache only keeps single-context blocks, so the scripts
+// above were lexed, parsed and compiled again on every poll. A call such as
+// "global.__mikage_probeLinks()" is cached. Regular expression literals
+// build a new RegExp on every evaluation, even inside a function, so they
+// live in global.__mikage_re. text() asks typeof first: a missing member
+// read inside try/catch still makes the VM log a code and register dump.
+const char *const kKAGProbeLibrary = R"TJS(
+global.__mikage_re = %[
+    linkQSave: /q(uick)?[_ ]?save/i,
+    linkQLoad: /q(uick)?[_ ]?load/i,
+    linkQuick: /q(uick)?[_ ]?(save|load)/i,
+    save: /save/i,
+    load: /load/i,
+    buttonQSave: /q(uick)?[_ ]?save|クイックセーブ|快速存档|快速保存/i,
+    buttonQLoad: /q(uick)?[_ ]?load|クイックロード|快速读档|快速读取/i,
+    buttonSave: /save|セーブ|存档|保存/i,
+    buttonLoad: /load|ロード|读档|读取/i,
+    buttonAuto: /auto|オート|自動|自动/i,
+    buttonSkip: /skip|スキップ|快进|快速翻页|跳过/i,
+    pipe: /\|/g
+];
+global.__mikage_text = function (o, p) {
+    if (typeof o[p] == 'undefined') return '';
+    try { var v = o[p]; return v === void ? '' : (string)v; } catch (e) { return ''; }
+} incontextof global;
+global.__mikage_classifyLink = function (t) {
+    if (t == '') return '';
+    var r = global.__mikage_re;
+    if (r.linkQSave.test(t)) return 'qsave';
+    if (r.linkQLoad.test(t)) return 'qload';
+    var s = r.save.test(t), l = r.load.test(t);
+    if (s && !l) return 'save';
+    if (l && !s) return 'load';
+    return '';
+} incontextof global;
+global.__mikage_classifyButton = function (t) {
+    if (t == '') return '';
+    var r = global.__mikage_re;
+    if (r.buttonQSave.test(t)) return 'qsave';
+    if (r.buttonQLoad.test(t)) return 'qload';
+    var s = r.buttonSave.test(t), l = r.buttonLoad.test(t);
+    if (s && !l) return 'save';
+    if (l && !s) return 'load';
+    if (r.buttonAuto.test(t)) return 'auto';
+    if (r.buttonSkip.test(t)) return 'skip';
+    return '';
+} incontextof global;
+global.__mikage_probeLinks = function {
+    if (typeof global.kag == 'undefined' || kag === void || typeof kag.fore == 'undefined') return '';
+    var classify = global.__mikage_classifyLink;
+    var out = [], layers = kag.fore.messages;
+    for (var m = 0; m < layers.count; m++) {
+        var ml = layers[m];
+        if (ml === void || !ml.visible || typeof ml.links == 'undefined' || typeof ml.numLinks == 'undefined') continue;
+        for (var i = 0; i < ml.numLinks; i++) {
+            var ln = ml.links[i];
+            if (ln === void) continue;
+            var t = (string)ln.target, e = (string)ln.exp, st = (string)ln.storage;
+            var k = classify(t); if (k == '') k = classify(e); if (k == '') k = classify(st);
+            out.add(k + ',' + m + ',' + i + ',' + st + ' ' + t + ' ' + e);
+        }
+    }
+    return out.join('|');
+} incontextof global;
+global.__mikage_probeButtons = function {
+    if (typeof global.kag == 'undefined' || kag === void || typeof kag.fore == 'undefined') return '';
+    var classify = global.__mikage_classifyButton, text = global.__mikage_text;
+    global.mikageButtons = [];
+    if (typeof global.mikageLayers == 'undefined') return '';
+    var learned = typeof kag.scflags != 'undefined' && kag.scflags !== void ? kag.scflags.mikageButtonKinds : void;
+    var out = [], layers = global.mikageLayers;
+    for (var i = 0; i < layers.count && global.mikageButtons.count < 64; i++) {
+        var c = layers[i], inMessage = false;
+        for (var p = c; p && !p.isPrimary; p = p.parent) if (p instanceof 'MessageLayer') { inMessage = true; break; }
+        if (inMessage) continue;
+        if (c instanceof 'ButtonLayer' && !(c instanceof 'LinkButtonLayer')) {
+            var name = text(c, 'name'), hint = text(c, 'hint'), exp = text(c, 'exp');
+            var target = text(c, 'target'), storage = text(c, 'storage');
+            var d = name + ' ' + hint + ' ' + exp + ' ' + target + ' ' + storage;
+            var k = classify(name); if (k == '') k = classify(hint);
+            if (k == '') k = classify(exp); if (k == '') k = classify(target);
+            if (k == '') k = classify(storage);
+            if (k == '' && learned !== void) { var lk = learned[c.left + ',' + c.top + ',' + c.width + ',' + c.height]; if (lk !== void) k = lk; }
+            out.add(k + ',' + global.mikageButtons.count + ',' + d.replace(global.__mikage_re.pipe, '/'));
+            global.mikageButtons.add(c);
+        }
+    }
+    return out.join('|');
+} incontextof global;
+global.__mikage_probeLayerTree = function {
+    if (typeof global.kag == 'undefined' || kag === void || typeof kag.fore == 'undefined') return '';
+    var text = global.__mikage_text;
+    if (typeof global.mikageLayers == 'undefined') return '';
+    var out = [], layers = global.mikageLayers, depths = global.mikageLayerDepths;
+    for (var i = 0; i < layers.count && out.count < 80; i++) {
+        var c = layers[i];
+        var t = c instanceof 'MessageLayer' ? 'M' + text(c, 'numLinks') : (c instanceof 'ButtonLayer' ? 'B' : 'L');
+        var e = text(c, 'exp') + text(c, 'target') + text(c, 'storage');
+        out.add(depths[i] + t + ':' + text(c, 'name') + '@' + c.left + ',' + c.top + ',' + c.width + 'x' + c.height + (e != '' ? ':' + e : ''));
+    }
+    return out.join(' ');
+} incontextof global;
+global.__mikage_buttonCenter = function (index) {
+    var c = global.mikageButtons[index];
+    var x = c.width \ 2, y = c.height \ 2;
+    // The primary layer's parent is null, not void.
+    for (var l = c; !l.isPrimary; l = l.parent) { x += l.left; y += l.top; }
+    return x < 0 || y < 0 || x > 32767 || y > 32767 ? -1 : x * 65536 + y;
+} incontextof global;
+global.__mikage_installTapWatch = function { if (typeof global.kag == 'undefined' || kag === void || typeof kag.fore == 'undefined') return 0; if (typeof global.mikageTap != 'undefined') return 1; if (kag.onMouseDown === void) return 0; global.mikageTapDown = kag.onMouseDown; global.mikageTap = %[key: '', at: 0]; global.mikageScreenKind = function {  var layers = kag.fore.messages;  for (var m = 0; m < layers.count; m++) {   var ml = layers[m];   if (ml === void || !ml.visible || typeof ml.links == 'undefined' || typeof ml.numLinks == 'undefined') continue;   for (var i = 0; i < ml.numLinks; i++) {    var ln = ml.links[i];    if (ln === void) continue;    var t = (string)ln.target + ' ' + (string)ln.exp + ' ' + (string)ln.storage;    if (global.__mikage_re.linkQuick.test(t)) continue;    var s = global.__mikage_re.save.test(t), l = global.__mikage_re.load.test(t);    if (s && !l) return 'save';    if (l && !s) return 'load';   }  }  return ''; }; global.mikageRemember = function (key, kind) {  if (kag.scflags.mikageButtonKinds === void) kag.scflags.mikageButtonKinds = %[];  if (kag.scflags.mikageButtonKinds[key] != kind) Debug.message('mikage.buttonLearned ' + key + ' ' + kind);  kag.scflags.mikageButtonKinds[key] = kind; }; global.mikageLearnMode = function (kind) {  var tap = mikageTap;  if (tap.key != '' && System.getTickCount() - tap.at < 1000) mikageRemember(tap.key, kind);  tap.key = ''; }; if (kag.enterAutoMode !== void) {  global.mikageAutoEnter = kag.enterAutoMode;  kag.enterAutoMode = function { try { global.mikageLearnMode('auto'); } catch (e) {} return global.mikageAutoEnter(...); } incontextof kag; } if (kag.skipToStop !== void) {  global.mikageSkipEnter = kag.skipToStop;  kag.skipToStop = function { try { global.mikageLearnMode('skip'); } catch (e) {} return global.mikageSkipEnter(...); } incontextof kag; } global.mikageLearnTap = function (x, y) {  var tap = mikageTap, shown = mikageScreenKind(), now = System.getTickCount();  if (shown != '') {   if (tap.key != '' && now - tap.at < 15000) mikageRemember(tap.key, shown);   tap.key = '';   return;  }  tap.key = '';  for (var c = kag.fore.base.getLayerAt(x, y); c && !c.isPrimary; c = c.parent) {   if (c instanceof 'MessageLayer') break;   if (c instanceof 'ButtonLayer' && !(c instanceof 'LinkButtonLayer')) {    tap.key = c.left + ',' + c.top + ',' + c.width + ',' + c.height;    tap.at = now;    break;   }  } }; kag.onMouseDown = function (x, y, button, shift) {  try { if (button == mbLeft) global.mikageLearnTap(x, y); } catch (e) {}  return global.mikageTapDown(...); } incontextof kag; return 1;} incontextof global;
+global.__mikage_probeVersion = 1;
+)TJS";
+
+// Defines kKAGProbeLibrary in the running game once; false (and the
+// one-off scripts above are used) when that fails.
+bool ensureKAGProbes()
+{
+    if (kagProbesReady)
+        return true;
+    if (kagProbesFailed || !MikageSDLHostIsRunning())
+        return false;
+    try {
+        TVPExecuteScript(ttstr(kKAGProbeLibrary));
+        tTJSVariant version;
+        TVPExecuteExpression(ttstr("typeof global.__mikage_probeVersion == 'undefined' ? 0 : global.__mikage_probeVersion"),
+                             &version);
+        kagProbesReady = version.Type() != tvtVoid && version.AsInteger() == 1;
+    } catch (...) {
+        kagProbesReady = false;
+    }
+    if (!kagProbesReady) {
+        kagProbesFailed = true;
+        MikageKRKRLogMessage("bridge", 4, "kagProbes.unavailable");
+    }
+    return kagProbesReady;
+}
 
 std::string runKAGString(const char *script)
 {
@@ -1116,14 +1266,24 @@ std::string runKAGString(const char *script)
     }
 }
 
-// Puts the tap watch on the game's window once KAG is up (checked about
-// once a second, until it is).
+// Puts the tap watch on the game's window once KAG is up: checked once a
+// second for the first 30 s, then less and less often (up to every 16 s),
+// so a game without KAG stops paying for it.
 void watchButtonTaps()
 {
-    if (tapWatchInstalled || ++tapWatchWait < 60)
+    if (tapWatchInstalled)
         return;
-    tapWatchWait = 0;
-    tapWatchInstalled = runKAGScript(kKAGTapWatch) == 1;
+    const Uint64 now = SDL_GetTicks();
+    if (tapWatchNextTick == 0 || now + 60000 < tapWatchNextTick) {
+        tapWatchNextTick = now + 1000;
+        return;
+    }
+    if (now < tapWatchNextTick)
+        return;
+    ++tapWatchAttempts;
+    const Uint64 wait = tapWatchAttempts < 30 ? 1000 : std::min<Uint64>(16000, 1000ull << std::min(tapWatchAttempts - 29, 4));
+    tapWatchNextTick = now + wait;
+    tapWatchInstalled = runKAGScript(ensureKAGProbes() ? "global.__mikage_installTapWatch()" : kKAGTapWatch) == 1;
 }
 
 struct KAGLink {
@@ -1150,7 +1310,7 @@ const char *linkKind(int32_t command)
 std::vector<KAGLink> kagLinks()
 {
     static std::string logged;
-    const std::string all = runKAGString(kKAGLinks);
+    const std::string all = runKAGString(ensureKAGProbes() ? "global.__mikage_probeLinks()" : kKAGLinks);
     if (all != logged) {
         logged = all;
         const std::string message = "kagLinks " + all.substr(0, 900);
@@ -1254,7 +1414,7 @@ void addKAGButtons(std::vector<KAGLink> &links)
     if (!MikageSDLHostIsRunning())
         return;
     shareVisibleLayers();
-    const std::string all = runKAGString(kKAGButtons);
+    const std::string all = runKAGString(ensureKAGProbes() ? "global.__mikage_probeButtons()" : kKAGButtons);
     if (all != loggedButtons) {
         loggedButtons = all;
         for (size_t at = 0, part = 0; at < all.size() && part < 6; at += 900, ++part) {
@@ -1280,7 +1440,7 @@ void addKAGButtons(std::vector<KAGLink> &links)
         known |= link.kind == "save" || link.kind == "load";
     if (known)
         return;
-    const std::string tree = runKAGString(kKAGLayerTree);
+    const std::string tree = runKAGString(ensureKAGProbes() ? "global.__mikage_probeLayerTree()" : kKAGLayerTree);
     if (tree == loggedTree)
         return;
     loggedTree = tree;
@@ -1324,8 +1484,9 @@ namespace {
 // the button's centre, through the window's input queue.
 bool pressButton(int index)
 {
-    const std::string script =
-        "(function { var c = global.mikageButtons[" + std::to_string(index) + "];"
+    const std::string script = ensureKAGProbes()
+        ? "global.__mikage_buttonCenter(" + std::to_string(index) + ")"
+        : "(function { var c = global.mikageButtons[" + std::to_string(index) + "];"
         " var x = c.width \\ 2, y = c.height \\ 2;"
         // The primary layer's parent is null, not void.
         " for (var l = c; !l.isPrimary; l = l.parent) { x += l.left; y += l.top; }"
