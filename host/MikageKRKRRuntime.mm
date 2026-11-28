@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Written for Mikage (https://github.com/Mikage-Next/krkrsdl3_build); see MIKAGE-NOTICE.md.
 #include "MikageKRKRRuntime.h"
 #include "MikageSDLHost.h"
 
