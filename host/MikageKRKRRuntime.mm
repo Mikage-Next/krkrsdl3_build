@@ -40,6 +40,8 @@ std::mutex skippedMoviesMutex;
 std::string skippedMovies;
 std::atomic<bool> stretchToScreen{false};
 thread_local bool mirroringKRKRLog = false;
+// MIKAGE_KRKR_CONSOLE_LOG, read once per session by MikageKRKRStart.
+std::atomic<bool> consoleMirrorRequested{false};
 SDL_LogOutputFunction previousLogOutput = nullptr;
 void *previousLogContext = nullptr;
 
@@ -217,6 +219,13 @@ void MikageKRKRForwardLog(const ttstr &line)
 
 void MikageKRKRMirrorConsoleLog(const ttstr &line)
 {
+    // SDL's output on iOS is NSLog, slow enough to show in frame times when
+    // a game logs a lot. Mirror only while diagnostics collect the log, or
+    // when a developer sets MIKAGE_KRKR_CONSOLE_LOG=1 (env or SDL hint);
+    // the framework is always built Release, so a DEBUG check can't do it.
+    if (!diagnosticCallback.load(std::memory_order_acquire) &&
+        !consoleMirrorRequested.load(std::memory_order_relaxed))
+        return;
     // Preserve the engine's SDL console output without collecting the same
     // message twice (or bypassing the host's VM-dump privacy filter).
     struct Restore {
@@ -475,6 +484,8 @@ extern "C" bool MikageKRKRStart(const char *gamePath,
 
         try {
             MikageKRKRSetLogCallback(diagnosticCallback.load(std::memory_order_acquire));
+            consoleMirrorRequested.store(SDL_GetHintBoolean("MIKAGE_KRKR_CONSOLE_LOG", false),
+                                         std::memory_order_relaxed);
             // Per-session Emote counters start from zero for each game.
             emoteplayer::resetPerformanceStats();
             MikageKRKRSetWindowScene(uiWindowScene);
