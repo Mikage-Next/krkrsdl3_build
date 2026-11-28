@@ -1075,7 +1075,7 @@ const char *const kKAGButtons =
     "  if (/skip|スキップ|快进|快速翻页|跳过/i.test(t)) return 'skip';"
     "  return '';"
     " };"
-    " var text = function (o, p) { if (typeof o[p] == 'undefined') return ''; try { var v = o[p]; return v === void ? '' : (string)v; } catch (e) { return ''; } };"
+    " var text = function (o, p) { try { if (typeof o[p] == 'undefined') return ''; var v = o[p]; return v === void ? '' : (string)v; } catch (e) { return ''; } };"
     " global.mikageButtons = [];"
     " if (typeof global.mikageLayers == 'undefined') return '';"
     " var learned = typeof kag.scflags != 'undefined' && kag.scflags !== void ? kag.scflags.mikageButtonKinds : void;"
@@ -1177,7 +1177,7 @@ const char *const kKAGTapWatch =
 const char *const kKAGLayerTree =
     "(function {"
     " if (typeof global.kag == 'undefined' || kag === void || typeof kag.fore == 'undefined') return '';"
-    " var text = function (o, p) { if (typeof o[p] == 'undefined') return ''; try { var v = o[p]; return v === void ? '' : (string)v; } catch (e) { return ''; } };"
+    " var text = function (o, p) { try { if (typeof o[p] == 'undefined') return ''; var v = o[p]; return v === void ? '' : (string)v; } catch (e) { return ''; } };"
     " if (typeof global.mikageLayers == 'undefined') return '';"
     " var out = [], layers = global.mikageLayers, depths = global.mikageLayerDepths;"
     " for (var i = 0; i < layers.count && out.count < 80; i++) {"
@@ -1213,8 +1213,13 @@ global.__mikage_re = %[
     pipe: /\|/g
 ];
 global.__mikage_text = function (o, p) {
-    if (typeof o[p] == 'undefined') return '';
-    try { var v = o[p]; return v === void ? '' : (string)v; } catch (e) { return ''; }
+    // typeof only turns a missing member into 'undefined'; an invalidated
+    // object or a throwing getter still throws, so it stays inside the try.
+    try {
+        if (typeof o[p] == 'undefined') return '';
+        var v = o[p];
+        return v === void ? '' : (string)v;
+    } catch (e) { return ''; }
 } incontextof global;
 global.__mikage_classifyLink = function (t) {
     if (t == '') return '';
